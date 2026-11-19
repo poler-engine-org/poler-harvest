@@ -122,9 +122,14 @@ poler-harvest /var/log "kernel error" --no-cache
 
 ---
 
-## 💖 Поддержка проекта
+## 💖 Поддержка проекта / Sponsorship
 
-* **GitHub Sponsors:** [github.com/sponsors/Kotokvit](https://github.com/sponsors/Kotokvit)
+Если инструмент сэкономил вам время и ресурсы, вы можете поддержать независимого разработчика:
+
+* **USDT (TRC-20):** `THLxXNLxxoYA5rgyinypexiaD3Nb9iXo7a`  
+  *(Сеть TRON, QR-код и баланс в [Tronscan](https://tronscan.org/#/address/THLxXNLxxoYA5rgyinypexiaD3Nb9iXo7a))*
+* **Binance Pay ID:** `892674734` *(User: User-770b3 — мгновенный донат без комиссии со всего мира)*
+* **Email для связи / B2B:** `vitalijkotok18@gmail.com`
 
 ---
 
