@@ -25,7 +25,7 @@ pub enum ModeArg {
 #[command(
     name = "poler-harvest",
     author = "Kotokvit / POLER Engineering Core",
-    version = "0.96.0",
+    version = "0.96.1",
     about = "Sovereign Ultra-Fast Filesystem Harvester & L1-L3 Address Crystal Scanner (successor to find + ripgrep)",
     after_help = "Использование:\n  poler-harvest <ROOT_DIR> <QUERY> [FORMAT]\n  poler-harvest [OPTIONS] -d <ROOT> -q <QUERY>\n\nФорматы: address (L3 binary stream), json, markdown, corpus"
 )]
@@ -77,6 +77,10 @@ struct Cli {
     /// Игнорировать правила .gitignore / .ignore
     #[arg(long = "no-ignore")]
     no_ignore: bool,
+
+    /// Отключить чтение и запись персистентного кэша (.t5a / .tar.poler)
+    #[arg(long = "no-cache")]
+    no_cache: bool,
 
     /// Число рабочих потоков (0 — авто по ядрам CPU)
     #[arg(short = 'j', long = "threads", default_value_t = 0)]
@@ -173,6 +177,7 @@ fn main() -> ExitCode {
         include_hidden: cli.hidden,
         no_ignore: cli.no_ignore,
         chunk_bytes: 4 << 20, // 4 MB default chunk
+        no_cache: cli.no_cache,
     };
 
     match run_harvest(&cfg) {

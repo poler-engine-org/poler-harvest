@@ -2,9 +2,9 @@
 # Contributor: POLER Engineering Core
 
 pkgname=poler-harvest
-pkgver=0.96.0
+pkgver=0.96.1
 pkgrel=1
-pkgdesc="Sovereign Ultra-Fast Filesystem Harvester & L1-L3 Address Crystal Scanner (successor to find + ripgrep)"
+pkgdesc="Content-addressed filesystem search with persistent L1-L3 cache (2ms warm lookups)"
 arch=('x86_64')
 url="https://github.com/poler-engine-org/poler-harvest"
 license=('MIT' 'Apache-2.0')

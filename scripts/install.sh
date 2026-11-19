@@ -4,7 +4,7 @@
 set -e
 
 REPO="poler-engine-org/poler-harvest"
-VERSION="0.96.0"
+VERSION="0.96.1"
 BIN_NAME="poler-harvest"
 
 echo "⚡ Установка poler-harvest v${VERSION}..."

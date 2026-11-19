@@ -1,6 +1,6 @@
 [package]
 name = "poler-harvest"
-version = "0.96.0"
+version = "0.96.1"
 edition = "2021"
 authors = ["Kotokvit / POLER Engineering Core"]
 description = "Sovereign Ultra-Fast Filesystem Harvester & L1-L3 Address Crystal Scanner"

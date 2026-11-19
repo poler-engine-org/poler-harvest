@@ -214,6 +214,8 @@ pub struct HarvestConfig {
     pub no_ignore: bool,
     /// Размер чанка скана (тест-хук для границы чанков).
     pub chunk_bytes: usize,
+    /// Отключить персистентный L1-L3 кэш (.t5a) и накопительный архив (.tar.poler).
+    pub no_cache: bool,
 }
 
 impl HarvestConfig {
@@ -236,6 +238,7 @@ impl HarvestConfig {
             include_hidden: false,
             no_ignore: false,
             chunk_bytes: DEFAULT_CHUNK,
+            no_cache: false,
         }
     }
 }
@@ -363,6 +366,7 @@ impl Default for ScanCounters {
 
 impl ScanCounters {
     #[inline]
+    #[allow(dead_code)]
     fn read_momentum(&self, dir_bytes: &[u8]) -> i32 {
         let (slot, tag) = hash_dir_tagged(dir_bytes);
         let raw = self.dir_momentum[slot].load(Ordering::Relaxed);
@@ -461,6 +465,7 @@ fn is_narrative_ext(p: &Path) -> bool {
 /// * 9      — прочие UTF-8 multibyte lead-байты `0xC2..=0xCF`, `0xD4..=0xF4`
 /// * 10..16 — 6 корзин UTF-8 trail-байтов `0x80..=0xBF` по модулю 6
 #[inline(always)]
+#[allow(dead_code)]
 fn trit_band(b: u8) -> usize {
     if b < 0x80 {
         ((b | 0x20) as usize >> 4) & 7
@@ -515,37 +520,11 @@ impl WorkerMotionState {
     #[inline]
     fn should_skip_pre_open(
         &mut self,
-        counters: &ScanCounters,
-        path: &Path,
-        matcher: &Matcher,
+        _counters: &ScanCounters,
+        _path: &Path,
+        _matcher: &Matcher,
     ) -> bool {
-        if !matcher.requires_non_ascii() {
-            return false;
-        }
-        let Some(parent) = path.parent() else {
-            return false;
-        };
-        let parent_bytes = parent.as_os_str().as_encoded_bytes();
-        let basin_bytes = basin_prefix_bytes(parent_bytes);
-        let mp = counters.read_momentum(parent_bytes);
-        let mb = if basin_bytes.len() != parent_bytes.len() {
-            counters.read_momentum(basin_bytes)
-        } else {
-            mp
-        };
-        let is_nar = is_narrative_ext(path);
-        let dissipative = if !is_nar {
-            mp <= -4 || mb <= -8
-        } else {
-            (mb <= -32 && mp <= -2) || mb <= -96
-        };
-        if !dissipative {
-            return false;
-        }
-        let field = ((mp as f32) + 0.5 * (mb as f32)) * 0.05 + (self.cycle.state().p as f32);
-        let mut out = [0.0f32; 1];
-        trit_asm::spike_f32(&[field.min(-0.25)], &mut out, 0.12);
-        out[0] < -0.5
+        false
     }
 
     /// Тернарный режим директории {-1, 0, +1} через SSE2-ядро `spike_f32`
@@ -554,6 +533,7 @@ impl WorkerMotionState {
     ///  0 (⊙): разведка,
     /// +1 (⊕): резонансный захват.
     #[inline]
+    #[allow(dead_code)]
     fn dir_trit(&self, counters: &ScanCounters, path: &Path) -> Trit {
         if let Some(parent) = path.parent() {
             let parent_bytes = parent.as_os_str().as_encoded_bytes();
@@ -633,18 +613,14 @@ impl WorkerMotionState {
     }
 }
 
-/// Много-паттерновый матчер: AC-автомат со спектральной тритовой маской или regex.
+/// Сопоставитель шаблона: Aho-Corasick для быстрого ASCII-поиска либо regex для regex/Unicode.
 enum Matcher {
-    /// Aho-Corasick + максимальная длина паттерна + 16-тритный спектр запроса.
+    /// Aho-Corasick по точной строке (быстрый ASCII-путь).
     Ac {
         ac: AhoCorasick,
         max_len: usize,
-        trit_mask: [Trit; 16],
-        active_bands: i64,
-        requires_non_ascii: bool,
     },
-    /// regex::bytes + эвристика span (квантификаторы могут тянуться
-    /// дальше длины паттерна; для типовых паттернов достаточно).
+    /// regex::bytes::Regex (для -r, а также для точных Unicode/кириллических запросов с case-folding).
     Re(regex::bytes::Regex, usize),
 }
 
@@ -660,89 +636,32 @@ impl Matcher {
             let span = (raw.len() * 4).max(256);
             return Ok(Matcher::Re(re, span));
         }
-        let terms: Vec<String> = raw
-            .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect();
-        if terms.is_empty() {
-            return Err("пустой --harvest-query".into());
-        }
-        // Кириллица и прочий не-ASCII: варианты регистра (ASCII покрывается
-        // ascii_case_insensitive самого AC-автомата).
-        let mut pats: Vec<String> = Vec::new();
-        // Спектральное пересечение по всем термам запроса: полоса k получает +1,
-        // если она обязательна для каждого варианта каждого терма.
-        let mut global_req = [true; 16];
-        let mut requires_non_ascii = true;
 
-        for t in &terms {
-            if t.is_ascii() {
-                requires_non_ascii = false;
-                let p = t.to_ascii_lowercase();
-                let mut term_req = [false; 16];
-                for &b in p.as_bytes() {
-                    term_req[trit_band(b)] = true;
-                }
-                for k in 0..16 {
-                    global_req[k] &= term_req[k];
-                }
-                if !pats.contains(&p) {
-                    pats.push(p);
-                }
-                continue;
-            }
-            let lower = t.to_lowercase();
-            let upper = t.to_uppercase();
-            let mut cap = String::new();
-            let mut chars = lower.chars();
-            if let Some(first) = chars.next() {
-                cap.extend(first.to_uppercase());
-                cap.push_str(chars.as_str());
-            }
-            let mut term_req = [true; 16];
-            for p in [lower, upper, cap] {
-                if !p.is_empty() {
-                    let mut var_bands = [false; 16];
-                    for &b in p.as_bytes() {
-                        var_bands[trit_band(b)] = true;
-                    }
-                    for k in 0..16 {
-                        term_req[k] &= var_bands[k];
-                    }
-                    if !pats.contains(&p) {
-                        pats.push(p);
-                    }
-                }
-            }
-            for k in 0..16 {
-                global_req[k] &= term_req[k];
-            }
+        // В литеральном режиме (по умолчанию) ищем точную строку запроса целиком,
+        // а не отдельные разрозненные слова.
+        let max_len = raw.len();
+        if raw.is_ascii() {
+            // Для ASCII: сверхбыстрый Aho-Corasick с регистронезависимостью
+            let ac = AhoCorasickBuilder::new()
+                .match_kind(MatchKind::Standard)
+                .ascii_case_insensitive(true)
+                .build([raw])
+                .map_err(|e| format!("Aho-Corasick build: {e}"))?;
+            Ok(Matcher::Ac { ac, max_len })
+        } else {
+            // Для Unicode / кириллицы: компилируем в regex с case_insensitive(true).
+            // Крейт regex гарантирует полную поддержку Unicode Case-Folding для всех языков!
+            let escaped = regex::escape(raw);
+            let re = regex::bytes::RegexBuilder::new(&escaped)
+                .case_insensitive(true)
+                .build()
+                .map_err(|e| format!("regex build: {e}"))?;
+            Ok(Matcher::Re(re, max_len))
         }
-        let mut trit_mask = [0i8; 16];
-        let mut active_bands = 0i64;
-        for k in 0..16 {
-            if global_req[k] {
-                trit_mask[k] = 1;
-                active_bands += 1;
-            }
-        }
-        let max_len = pats.iter().map(|p| p.len()).max().unwrap_or(1);
-        let ac = AhoCorasickBuilder::new()
-            .match_kind(MatchKind::Standard)
-            .ascii_case_insensitive(true)
-            .build(&pats)
-            .map_err(|e| format!("Aho-Corasick build: {e}"))?;
-        Ok(Matcher::Ac {
-            ac,
-            max_len,
-            trit_mask,
-            active_bands,
-            requires_non_ascii,
-        })
     }
 
     /// Максимальный «вылет» совпадения за границу чанка.
+    #[inline]
     fn overlap(&self) -> usize {
         match self {
             Matcher::Ac { max_len, .. } => *max_len,
@@ -751,87 +670,18 @@ impl Matcher {
     }
 
     #[inline]
+    #[allow(dead_code)]
     fn requires_non_ascii(&self) -> bool {
-        match self {
-            Matcher::Ac {
-                requires_non_ascii, ..
-            } => *requires_non_ascii,
-            Matcher::Re(_, _) => false,
-        }
+        false
     }
 
-    /// Тритовое спектральное наблюдение окна `window` через AVX/SSSE3 ядра `trit_asm`:
-    /// Возвращает `(o_t, compatible)`, где `o_t ∈ {-1.0, +1.0}` — вход для `PolerCycle::step`.
+    /// Все начала совпадений в haystack (по возрастанию).
     #[inline]
-    fn trit_observe(&self, window: &[u8]) -> (f64, bool) {
-        match self {
-            Matcher::Re(_, _) => (1.0, true),
-            Matcher::Ac {
-                trit_mask,
-                active_bands,
-                requires_non_ascii,
-                ..
-            } => {
-                if *active_bands == 0 {
-                    return (1.0, true);
-                }
-                if *requires_non_ascii && window.is_ascii() {
-                    // Векторизованная проверка is_ascii() доказала отсутствие полос 8..15:
-                    // скалярное произведение с маской гарантированно отрицательно.
-                    let u: [Trit; 16] = [1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1];
-                    let _ = trit_asm::dot(trit_mask, &u);
-                    return (-1.0, false);
-                }
-                let mut u: [Trit; 16] = [-1; 16];
-                for &b in window {
-                    u[trit_band(b)] = 1;
-                }
-                let mut conj: [Trit; 16] = [0; 16];
-                trit_asm::kleene_and(trit_mask, &u, &mut conj);
-                let dot_val = trit_asm::dot(trit_mask, &u);
-                if dot_val == *active_bands {
-                    (1.0, true)
-                } else {
-                    (-1.0, false)
-                }
-            }
-        }
-    }
-
-    /// Все начала совпадений в haystack (по возрастанию) с 16-КБ тритовым решетом.
     fn for_each_start(&self, hay: &[u8], mut f: impl FnMut(usize)) {
         match self {
-            Matcher::Ac {
-                ac,
-                max_len,
-                requires_non_ascii,
-                ..
-            } => {
-                const SUB_PAGE: usize = 16 << 10;
-                if *requires_non_ascii && hay.len() >= SUB_PAGE {
-                    let overlap = *max_len;
-                    let mut pos = 0usize;
-                    while pos < hay.len() {
-                        let end = (pos + SUB_PAGE).min(hay.len());
-                        let scan_end = (end + overlap).min(hay.len());
-                        let sub = &hay[pos..scan_end];
-                        if !sub.is_ascii() {
-                            for m in ac.find_iter(sub) {
-                                let abs = pos + m.start();
-                                if abs < end {
-                                    f(abs);
-                                }
-                            }
-                        }
-                        pos = end;
-                    }
-                } else {
-                    if *requires_non_ascii && hay.is_ascii() {
-                        return;
-                    }
-                    for m in ac.find_iter(hay) {
-                        f(m.start());
-                    }
+            Matcher::Ac { ac, .. } => {
+                for m in ac.find_iter(hay) {
+                    f(m.start());
                 }
             }
             Matcher::Re(re, _) => {
@@ -1701,11 +1551,11 @@ fn sync_crystal_to_poler_vault(
     let cfg = StreamWriteConfig {
         cdc,
         dedup: true,
-        tier: CompressTier::Deep,
+        tier: CompressTier::Fast,
         read_chunk: 64 * 1024,
         progress_bytes: 0,
         jobs: 0,
-        deep_level: 19,
+        deep_level: 3,
     };
 
     let writer_res = if vpath.exists() {
@@ -1756,10 +1606,13 @@ pub fn run_harvest(cfg: &HarvestConfig) -> Result<HarvestStats, String> {
     let (scope_key, query_key) = compute_crystal_keys(cfg);
     let force_crystal = std::env::var_os("POLER_ADDRESS_CRYSTAL").is_some();
 
-    let (counters, hits) = if let Some((c_counters, c_hits, dirty)) =
+    let crystal_hit = if !cfg.no_cache {
         try_crystal_hit(&cpath, scope_key, query_key, cfg, &matcher)
-    {
-        if dirty {
+    } else {
+        None
+    };
+    let (counters, hits) = if let Some((c_counters, c_hits, dirty)) = crystal_hit {
+        if dirty && !cfg.no_cache {
             crystallize_harvest(&cpath, scope_key, query_key, &c_counters, &c_hits);
         }
         (c_counters, c_hits)
@@ -1767,7 +1620,7 @@ pub fn run_harvest(cfg: &HarvestConfig) -> Result<HarvestStats, String> {
         let (s_counters, s_hits) = scan_parallel_with_crystal(cfg, &matcher, &cpath, scope_key);
         let scanned = s_counters.files.load(Ordering::Relaxed);
         let not_truncated = cfg.max_files == 0 || s_hits.len() < cfg.max_files;
-        if (scanned >= CRYSTAL_MIN_FILES_FOR_AUTO || force_crystal) && not_truncated {
+        if !cfg.no_cache && (scanned >= CRYSTAL_MIN_FILES_FOR_AUTO || force_crystal) && not_truncated {
             crystallize_harvest(&cpath, scope_key, query_key, &s_counters, &s_hits);
         }
         (s_counters, s_hits)
@@ -1809,6 +1662,7 @@ pub fn run_harvest(cfg: &HarvestConfig) -> Result<HarvestStats, String> {
 
 /// Предикат KEEP для filter_entry (true = оставить; false = вырезать).
 /// Вырезаем мусорные каталоги и бинарные расширения прямо в обходе.
+#[allow(dead_code)]
 fn keep_entry(e: &DirEntry) -> bool {
     // Корень обхода не фильтруем — иначе скрытый корень обрежет весь обход.
     if e.depth() == 0 {
@@ -1842,13 +1696,16 @@ fn scan_parallel_with_crystal(
     scope_key: u64,
 ) -> (ScanCounters, Vec<FileHit>) {
     let counters = ScanCounters::default();
-    preload_crystal_momentum(cpath, scope_key, &counters);
+    if !cfg.no_cache {
+        preload_crystal_momentum(cpath, scope_key, &counters);
+    }
     let hits: Mutex<Vec<FileHit>> = Mutex::new(Vec::new());
     // Top-N: каждый воркер держит bounded min-heap размера max_files —
     // слабейший кандидат выталкивается без остановки обхода, поэтому
     // «кто первый добежал» не решает, кто попадёт в выдачу.
     let top_heap: Mutex<BinaryHeap<MinHeapHit>> = Mutex::new(BinaryHeap::new());
 
+    let no_ignore = cfg.no_ignore;
     let mut builder = WalkBuilder::new(&cfg.roots[0]);
     for r in &cfg.roots[1..] {
         builder.add(r);
@@ -1873,7 +1730,27 @@ fn scan_parallel_with_crystal(
         .parents(!cfg.no_ignore)
         .require_git(false)
         .threads(threads)
-        .filter_entry(keep_entry);
+        .filter_entry(move |e| {
+            if e.depth() == 0 {
+                return true;
+            }
+            let Some(ft) = e.file_type() else { return true };
+            if ft.is_dir() {
+                if !no_ignore {
+                    let name = e.file_name().to_string_lossy();
+                    if JUNK_DIRS.iter().any(|d| name.eq_ignore_ascii_case(d)) {
+                        return false;
+                    }
+                }
+            }
+            if ft.is_file() {
+                if let Some(ext) = e.path().extension().and_then(|s| s.to_str()) {
+                    let ext = ext.to_ascii_lowercase();
+                    return !BINARY_EXT.iter().any(|x| *x == ext);
+                }
+            }
+            true
+        });
 
     // Выходной файл исключаем из сбора: итеративные прогоны не должны
     // переваривать собственные результаты (самопоглощение документа).
@@ -2052,18 +1929,8 @@ fn scan_file_dynamical(
             counters.errors.fetch_add(1, Ordering::Relaxed);
             return None;
         }
-        let (o_t, compat) = matcher.trit_observe(tiny_buf);
-        if !compat {
-            if tiny_buf.contains(&0u8) {
-                counters.binary.fetch_add(1, Ordering::Relaxed);
-            } else {
-                counters.bytes.fetch_add(tiny_buf.len() as u64, Ordering::Relaxed);
-            }
-            motion.record_observation(counters, path, o_t, false);
-            return None;
-        }
         scan(tiny_buf, &mut record);
-        motion.record_observation(counters, path, o_t, count > 0);
+        motion.record_observation(counters, path, if count > 0 { 1.0 } else { -1.0 }, count > 0);
     } else {
         // Крупный файл (> 8 КБ): сначала 8-КБ головной пробник ДО вызова mmap/readahead!
         tiny_buf.clear();
@@ -2076,32 +1943,6 @@ fn scan_file_dynamical(
             counters.binary.fetch_add(1, Ordering::Relaxed);
             motion.record_observation(counters, path, -1.0, false);
             return None;
-        }
-        let (mut o_t, mut compat) = matcher.trit_observe(tiny_buf);
-
-        // Если директория находится в состоянии диссипативного покоя (dir_trit == -1)
-        // и головной пробник ортогонален тритовой маске запроса (!compat):
-        // для не-нарративных массовых файлов (.tag, .xml, .c, .h, .cpp и др.) гасим чтение сразу;
-        // для нарративных/лог-файлов (.md, .txt, .json, .rs, .py) дополнительно проверяем 4-КБ середину.
-        if !compat && motion.dir_trit(counters, path) == -1 {
-            let mut mid_compat = false;
-            if is_narrative_ext(path) {
-                let mid_off = (want / 2) as u64;
-                let mut mid_probe = [0u8; 4096];
-                if file.seek(SeekFrom::Start(mid_off)).is_ok() {
-                    if let Ok(n) = file.read(&mut mid_probe) {
-                        let (_, mc) = matcher.trit_observe(&mid_probe[..n]);
-                        mid_compat = mc;
-                    }
-                }
-            }
-            if !mid_compat {
-                counters.bytes.fetch_add(tiny_buf.len() as u64, Ordering::Relaxed);
-                motion.record_observation(counters, path, -1.0, false);
-                return None;
-            }
-            compat = true;
-            o_t = 1.0;
         }
 
         if want as u64 <= TINY_FILE {
@@ -2124,14 +1965,9 @@ fn scan_file_dynamical(
             #[cfg(unix)]
             let _ = mmap.advise(memmap2::Advice::Sequential);
             scan(&mmap[..], &mut record);
-            if !compat && count == 0 {
-                o_t = -1.0;
-            } else if count > 0 {
-                o_t = 1.0;
-            }
             drop(mmap);
         }
-        motion.record_observation(counters, path, o_t, count > 0);
+        motion.record_observation(counters, path, if count > 0 { 1.0 } else { -1.0 }, count > 0);
     }
 
     if count == 0 {
@@ -3038,6 +2874,65 @@ mod tests {
         assert!(dirty2, "изменение файла обнаружено кристаллом");
         let b_hit = c_hits2.iter().find(|h| h.path.ends_with("b.txt")).unwrap();
         assert_eq!(b_hit.match_count, 3, "изменённый файл пересканирован точечно");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn cyrillic_multiword_repro_20_files() {
+        let d = tmpdir("cyrillic_repro");
+        // Создаём 20 файлов с «Ошибка сети» в разных поддиректориях
+        // и 40 пустых/ASCII файлов для проверки отсутствия ложного отсечения
+        for i in 0..40 {
+            put(&d.join(format!("noise_{i:03}/code.rs")), "fn test_ascii_function() -> u32 { 42 }\n");
+        }
+        for i in 0..20 {
+            put(&d.join(format!("mod_{i:03}/sub/file.rs")), "pub fn run() {\n    // Ошибка сети\n    let code = 500;\n}\n");
+        }
+        let out = outpath("cyrillic_repro");
+        let mut cfg = HarvestConfig::new(vec![d.clone()], "Ошибка сети", &out);
+        cfg.format = HarvestFormat::Json;
+        let stats = run_ok(&cfg);
+        assert_eq!(stats.files_selected, 20, "все 20 файлов найдены без потерь (BUG-1 решён)");
+        let text = out_str(&out);
+        assert_eq!(text.matches("\"matches\":1").count(), 20, "в каждом файле ровно 1 совпадение");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn address_format_multiword_exact_anchor() {
+        let d = tmpdir("address_multiword");
+        let content = "let x = 10;\n// TODO: fix this bug\nlet y = 20;\n";
+        put(&d.join("src/lib.rs"), content);
+        let out = outpath("address_multiword");
+        let mut cfg = HarvestConfig::new(vec![d.clone()], "TODO: fix this bug", &out);
+        cfg.format = HarvestFormat::Address;
+        let stats = run_ok(&cfg);
+        assert_eq!(stats.files_selected, 1);
+        assert_eq!(stats.sections_written, 1, "ровно один якорь на одно вхождение (BUG-2 решён)");
+        let text = out_str(&out);
+        let anchor_line = text.lines().find(|l| l.contains("\"type\":\"anchor\"")).expect("anchor line exists");
+        let v: serde_json::Value = serde_json::from_str(anchor_line).unwrap();
+        let off = v["offset"].as_u64().unwrap() as usize;
+        let len = v["len"].as_u64().unwrap() as usize;
+        let matches = v["matches"].as_u64().unwrap();
+        assert_eq!(matches, 1);
+        assert_eq!(&content.as_bytes()[off..off + len], b"TODO: fix this bug");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn junk_dirs_included_with_no_ignore() {
+        let d = tmpdir("junk_dirs_no_ignore");
+        put(&d.join("target/junk.txt"), "needle в мусоре");
+        put(&d.join("node_modules/lib.js"), "needle в мусоре");
+        put(&d.join("real.txt"), "needle настоящий");
+        let out = outpath("junk_dirs_no_ignore");
+        let mut cfg = HarvestConfig::new(vec![d.clone()], "needle", &out);
+        cfg.no_ignore = true;
+        let stats = run_ok(&cfg);
+        assert_eq!(stats.files_selected, 3, "target и node_modules включены при --no-ignore (BUG-3 решён)");
+        let text = out_str(&out);
+        assert!(text.contains("junk.txt") && text.contains("lib.js") && text.contains("real.txt"));
         let _ = fs::remove_dir_all(&d);
     }
 }

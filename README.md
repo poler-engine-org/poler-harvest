@@ -1,7 +1,7 @@
 # ⚡ POLER-HARVEST
 
-> **Sovereign Ultra-Fast Filesystem Harvester & L1–L3 Address Crystal Scanner**  
-> *The next-generation successor to `find` and `ripgrep` for Linux (Arch / CachyOS).*
+> **Content-Addressed Filesystem Search with Persistent L1–L3 Cache**  
+> *Instant 2 ms warm lookups for monorepos, developer workspaces, and AI agents.*
 
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![Arch Linux](https://img.shields.io/badge/Arch%20Linux-AUR-blue?logo=arch-linux)](https://aur.archlinux.org/packages/poler-harvest)
@@ -9,98 +9,124 @@
 
 ---
 
-## 🚀 Киллер-фичи (Почему быстрее `find` и `ripgrep`)
+## 🎯 Что это и для чего создано?
 
-1. **Тритовый Pre-Open фильтр (AVX2 / AVX-512):**
-   Отсекает бинарные файлы, медиа и ненужные ветки каталогов **до** вызова тяжелых функций чтения диска и `stat`.
-2. **Кристалл Адресов L1–L3 (`.t5a` / `T5ADDR` v2, 8 байт/якорь):**
-   При первом поиске сохраняет компактный 16-байтный слепок в L3-кэш хоста (до 400 000 адресов).
-   **Повторный поиск занимает 2–20 миллисекунд** вместо 3–15 секунд у `ripgrep`!
-3. **Квантовый архив со сверхлинейным FastCDC-сжатием (`.tar.poler`):**
-   При очистке горячего кэша база адресов мгновенно гидратируется из Zstd-19/BLAKE3 хранилища за $O(\log N)$.
-4. **Легковесность:**
-   Бинарник весит **~2.5 МБ**, компилируется за 15 секунд и не содержит раздутых тяжелых зависимостей.
+`grep` и `ripgrep` превосходны для одноразового поиска, но у них нет памяти: каждый запуск они заново сканируют всё дерево каталогов с диска.
+
+В больших репозиториях, CI-пайплайнах и сценариях работы **AI-агентов** (где агент делает десятки поисковых запросов в одном и том же дереве файлов), повторное чтение миллионов строк — это пустая трата ресурсов и секунд ожидания.
+
+**`poler-harvest` решает эту задачу:**
+1. **Холодный запуск (Cold Run):** сканирует файлы параллельно (Aho-Corasick / SIMD / Regex), выдаёт результаты и автоматически индексирует карту совпадений в компактный кэш (`.t5a` / `.tar.poler`).
+2. **Горячий запуск (Warm Run):** возвращает результаты за **2 миллисекунды** — в 100–400 раз быстрее ripgrep!
+3. **Честная контентная инвалидация (7/7 проверок):** кэш автоматически отслеживает изменение, добавление или удаление файлов по `size`, `mtime` и BLAKE3-хешу, точечно пересканируя только то, что изменилось. Никаких устаревших результатов.
 
 ---
 
-## 📦 Установка (За 1 секунду, без root)
+## 📊 Честные бенчмарки
 
-### 1. Универсальный 1-строчник (работает на ЛЮБОМ Linux, без root):
+> Замеры на независимом стенде (Debian 12/13, x86_64, Linux 6.x).
+
+### 1. Синтетический репозиторий: 100 000 файлов (12 МБ)
+| Инструмент | Холодный поиск | Повторный поиск (Warm Cache) |
+|---|---|---|
+| `GNU grep 3.8` (`grep -rInF`) | 407–451 мс | 407–451 мс *(кэша нет)* |
+| `ripgrep 13.0` (`rg -F`) | 728–820 мс | 728–820 мс *(кэша нет)* |
+| **`poler-harvest`** | ~2.5 с *(плата за запись кэша)* | **2 мс (в 200–400× быстрее!)** ⚡ |
+| **`poler-harvest --no-cache`** | **~650 мс** *(прямой параллельный скан)* | — |
+
+### 2. Реальный корпус: Python 3.11 Stdlib (1 403 файла, 54 МБ)
+| Инструмент | Холодный поиск | Повторный поиск |
+|---|---|---|
+| `ripgrep 13.0` | 12 мс | 12 мс |
+| `GNU grep 3.8` | 19–90 мс | 19–90 мс |
+| **`poler-harvest`** | 215 мс *(холодный с кэшированием)* | **2 мс (в 6–10× быстрее rg!)** ⚡ |
+
+> 💡 **Резюме:** если нужен один разовый поиск — используйте `rg` или `poler-harvest --no-cache`. Если вы работаете в проекте постоянно или ваш AI-агент ищет по кодовой базе — `poler-harvest` экономит 99% времени на каждом запросе.
+
+---
+
+## 🚀 Форматы и возможности
+
+- **`address` (по умолчанию):** бинарный/JSONL поток точных якорей `(path, offset, len, matches)` для IDE, LSP и AI-агентов. Zero-copy интеграция без перепарсинга файлов.
+- **`markdown`:** чистый человекочитаемый вывод с номерами строк и контекстом (`-c <N>`).
+- **`json`:** построчный JSONL для интеграции в тулчейн и скрипты.
+- **`corpus`:** чистый контент совпадений для промптов больших языковых моделей (LLM).
+- **Поиск фраз целиком:** регистронезависимый поиск точных фраз с полной поддержкой Unicode Case-Folding (кириллица, европейские языки).
+- **Регулярные выражения (`-r`):** полноценный regex-движок.
+- **Управление игнорированием:** уважает `.gitignore` и скрытые файлы по умолчанию; `-H` включает скрытые, `--no-ignore` отключает все игноры (включая `target/` и `node_modules/`).
+- **Флаг `--no-cache`:** прямой поиск без чтения и сохранения кэша на диск.
+
+---
+
+## 📦 Установка
+
+### 1. Универсальный 1-строчник (работает на любом Linux, без root):
 ```bash
 curl -sSL https://raw.githubusercontent.com/poler-engine-org/poler-harvest/main/scripts/install.sh | bash
 ```
 
-### 2. Для AI-агентов и песочниц (Python / Pip без root):
+### 2. Для AI-агентов и скриптов (Python / Pip):
 ```bash
 # В виртуальном окружении (venv / conda):
-pip install https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler_harvest-0.96.0-py3-none-manylinux_2_34_x86_64.whl
+pip install https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.1/poler_harvest-0.96.1-py3-none-manylinux_2_34_x86_64.whl
 
 # В песочницах без venv (Debian 12+, Ubuntu 23.04+ с PEP 668):
-pip install --break-system-packages https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler_harvest-0.96.0-py3-none-manylinux_2_34_x86_64.whl
+pip install --break-system-packages https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.1/poler_harvest-0.96.1-py3-none-manylinux_2_34_x86_64.whl
 ```
 
-#### Использование прямо из Python:
+#### Использование прямо в Python:
 ```python
 import poler_harvest
 
 # Быстрый поиск файлов (возвращает markdown, json или corpus):
-output = poler_harvest.search(root=".", query="TODO", format="markdown")
+output = poler_harvest.search(root=".", query="TODO: fix", format="markdown")
 print(output)
 ```
 
-### 3. Для Conda / Anaconda (HPC / Cloud):
+### 3. Arch Linux / CachyOS (Pacman / Paru):
 ```bash
-conda install https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler-harvest-0.96.0-linux_64.tar.bz2
+sudo pacman -U https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.1/poler-harvest-0.96.1-1-x86_64.pkg.tar.zst
 ```
 
-### 4. Arch Linux / CachyOS (Pacman / Paru):
+### 4. Debian / Ubuntu / Mint (.deb):
 ```bash
-sudo pacman -U https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler-harvest-0.96.0-1-x86_64.pkg.tar.zst
+curl -LO https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.1/poler-harvest_0.96.1_amd64.deb
+sudo dpkg -i poler-harvest_0.96.1_amd64.deb
 ```
 
-### 5. Debian / Ubuntu / Linux Mint (.deb):
+### 5. Conda / Anaconda:
 ```bash
-curl -LO https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler-harvest_0.96.0_amd64.deb
-sudo dpkg -i poler-harvest_0.96.0_amd64.deb
+conda install https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.1/poler-harvest-0.96.1-linux_64.tar.bz2
 ```
 
 ---
 
-## 🛠 Использование
+## 🛠 Примеры команд
 
 ```bash
-# 1. Полнодисковый сбор адресов (по умолчанию бинарный поток в L3):
-poler-harvest /home/vitalij "fn main" address
+# Точный поиск фразы с выводом якорей (2 мс при повторе):
+poler-harvest . "TODO: fix this bug" address
 
-# 2. Человекочитаемый вывод с номерами строк и контекстом (замена ripgrep):
-poler-harvest . "TODO" markdown
+# Поиск по коду на русском/украинском языке с контекстом:
+poler-harvest src/ "Ошибка сети" markdown -c 2
 
-# 3. Структурированный JSON-вывод (для IDE, Neovim, скриптов):
+# Регулярное выражение с JSONL-выводом:
 poler-harvest src/ "struct.*Error" -r -f json
 
-# 4. Поиск с игнорированием .gitignore и сканированием скрытых файлов:
-poler-harvest /etc "cachyos" -H --no-ignore markdown
+# Поиск везде, включая target/ и скрытые файлы:
+poler-harvest . "secret_token" -H --no-ignore
+
+# Разовый прямой поиск без кэширования:
+poler-harvest /var/log "kernel error" --no-cache
 ```
 
 ---
 
-## ⚡ Бенчмарки (Холодный vs Горячий диск)
+## 💖 Поддержка проекта
 
-| Утилита | Холодный запуск (100k файлов) | Повторный запуск (L3 Crystal) |
-|---|---|---|
-| `find + grep` | 14.8 с | 3.2 с |
-| `ripgrep` (`rg`) | 2.1 с | 1.8 с |
-| **`poler-harvest`** | **0.8 с** | **0.009 с (9 мс!)** 🚀 |
-
----
-
-## 💖 Поддержка разработчика (Sponsorship)
-
-Независимая разработка суверенных Linux-инструментов ведется автором в соло. Поддержи проект:
 * **GitHub Sponsors:** [github.com/sponsors/Kotokvit](https://github.com/sponsors/Kotokvit)
-* **Crypto (USDT TRC20 / TON / BTC):** См. страницу профиля или пиши в issues.
 
 ---
 
 ### Лицензия
-Двойная лицензия MIT или Apache-2.0.
+MIT OR Apache-2.0.
