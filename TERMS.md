@@ -67,4 +67,5 @@
 
 * **Автор:** Kotokvit / POLER Engineering Core
 * **Email:** `vitalijkotok18@gmail.com`
+* **Телефон / Контакт:** `+380937981708`
 * **Официальный репозиторий:** [https://github.com/poler-engine-org/poler-harvest](https://github.com/poler-engine-org/poler-harvest)

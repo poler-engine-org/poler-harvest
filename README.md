@@ -130,6 +130,7 @@ poler-harvest /var/log "kernel error" --no-cache
   *(Сеть TRON, QR-код и баланс в [Tronscan](https://tronscan.org/#/address/THLxXNLxxoYA5rgyinypexiaD3Nb9iXo7a))*
 * **Binance Pay ID:** `892674734` *(User: User-770b3 — мгновенный донат без комиссии со всего мира)*
 * **Email для связи / B2B:** `vitalijkotok18@gmail.com`
+* **Телефон / Telegram:** `+380937981708`
 
 ---
 
