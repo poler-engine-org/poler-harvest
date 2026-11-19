@@ -8,8 +8,8 @@ pkgdesc="Sovereign Ultra-Fast Filesystem Harvester & L1-L3 Address Crystal Scann
 arch=('x86_64')
 url="https://github.com/poler-engine-org/poler-harvest"
 license=('MIT' 'Apache-2.0')
-depends=('gcc-libs' 'glibc')
-makedepends=('cargo')
+depends=('gcc-libs' 'glibc' 'zstd')
+makedepends=('cargo' 'pkgconf')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
@@ -20,21 +20,23 @@ prepare() {
 }
 
 build() {
-    cd "$pkgname-$pkgver"
+    if [ -d "$pkgname-$pkgver" ]; then
+        cd "$pkgname-$pkgver"
+    fi
     export RUSTUP_TOOLCHAIN=stable
-    export CARGO_TARGET_DIR=target
-    # CachyOS & Arch compiler flags
-    cargo build --frozen --release --all-features
+    cargo build --release --locked
 }
 
 check() {
-    cd "$pkgname-$pkgver"
+    if [ -d "$pkgname-$pkgver" ]; then
+        cd "$pkgname-$pkgver"
+    fi
     export RUSTUP_TOOLCHAIN=stable
-    cargo test --frozen --all-features
+    cargo test --release --locked
 }
 
 package() {
-    cd "$pkgname-$pkgver"
+    cd "$startdir"
     install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 }

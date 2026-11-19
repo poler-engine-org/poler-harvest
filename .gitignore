@@ -1,4 +1,6 @@
 /target
+/pkg
+*.pkg.tar.zst
 **/*.rs.bk
 *.poler
 *.t5a
