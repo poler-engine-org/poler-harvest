@@ -23,23 +23,32 @@
 
 ---
 
-## 📦 Установка
+## 📦 Установка (За 1 секунду, без root)
 
-### Arch Linux / CachyOS (AUR / Paru)
-
+### 1. Универсальный 1-строчник (работает на ЛЮБОМ Linux, без root):
 ```bash
-paru -S poler-harvest
-# или с yay:
-yay -S poler-harvest
+curl -sSL https://raw.githubusercontent.com/poler-engine-org/poler-harvest/main/scripts/install.sh | bash
 ```
 
-### Сборка из исходников
-
+### 2. Для AI-агентов и песочниц (через Pip без root):
 ```bash
-git clone https://github.com/poler-engine-org/poler-harvest.git
-cd poler-harvest
-cargo build --release
-sudo cp target/release/poler-harvest /usr/local/bin/
+pip install https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler_harvest-0.96.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+```
+
+### 3. Для Conda / Anaconda (HPC / Cloud):
+```bash
+conda install https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler-harvest-0.96.0-linux_64.tar.bz2
+```
+
+### 4. Arch Linux / CachyOS (Pacman / Paru):
+```bash
+sudo pacman -U https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler-harvest-0.96.0-1-x86_64.pkg.tar.zst
+```
+
+### 5. Debian / Ubuntu / Linux Mint (.deb):
+```bash
+curl -LO https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler-harvest_0.96.0_amd64.deb
+sudo dpkg -i poler-harvest_0.96.0_amd64.deb
 ```
 
 ---
