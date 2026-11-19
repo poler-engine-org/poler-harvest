@@ -38,7 +38,7 @@
 Если вы встраиваете модифицированный или немодифицированный код в коммерческий продукт или закрытый сервис:
 
 Вы обязаны в течение **14 дней** с момента первого релиза или продакшен-деплоя направить уведомление на:
-📧 **`dev@poler-engine.org`** (или создать Issue в официальном репозитории).
+📧 **`vitalijkotok18@gmail.com`** (или создать Issue в официальном репозитории).
 
 ### Шаблон уведомления:
 ```
@@ -66,5 +66,5 @@
 ## 5. Контакты правообладателя
 
 * **Автор:** Kotokvit / POLER Engineering Core
-* **Email:** `vitalijkotok18@gmail.com` / `dev@poler-engine.org`
+* **Email:** `vitalijkotok18@gmail.com`
 * **Официальный репозиторий:** [https://github.com/poler-engine-org/poler-harvest](https://github.com/poler-engine-org/poler-harvest)
