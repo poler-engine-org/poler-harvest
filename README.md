@@ -3,7 +3,7 @@
 > **Content-Addressed Filesystem Search with Persistent L1–L3 Cache**  
 > *Instant 2 ms warm lookups for monorepos, developer workspaces, and AI agents.*
 
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![License: POLER Source-Available 1.0](https://img.shields.io/badge/License-POLER--1.0%20Source--Available-blue.svg)](LICENSE)
 [![Arch Linux](https://img.shields.io/badge/Arch%20Linux-AUR-blue?logo=arch-linux)](https://aur.archlinux.org/packages/poler-harvest)
 [![CachyOS](https://img.shields.io/badge/CachyOS-Optimized-brightgreen)](https://cachyos.org)
 
@@ -133,5 +133,10 @@ poler-harvest /var/log "kernel error" --no-cache
 
 ---
 
-### Лицензия
-MIT OR Apache-2.0.
+## ⚖️ Лицензия и условия использования / License
+
+Проект распространяется под лицензией **POLER Custom Source-Available & Modification Disclosure License Version 1.0** (см. полный текст [`LICENSE`](LICENSE) и практическое руководство [`TERMS.md`](TERMS.md)).
+
+* 🔍 **Открытый исходный код (Source-Available):** Полная свобода изучения, аудита безопасности, локальной компиляции, бенчмаркинга и персонального использования.
+* 🛡️ **Защита от закрытых форков (Anti-Silent-Forking):** Включение ядра или модификаций в сторонние коммерческие продукты и платформы требует обязательного уведомления правообладателя (`dev@poler-engine.org` или через Issue в репозитории) в течение 14 дней с момента первого релиза/деплоя.
+* 💎 **Бесплатно для сообщества:** Личное использование, независимые исследования и интеграции внутри открытых инструментов — абсолютно бесплатны. Роялти 5% действует исключительно при валовой выручке коммерческого продукта свыше **$25 000 в квартал** (с безопасной гаванью до $10 000).

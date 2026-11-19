@@ -7,7 +7,7 @@ pkgrel=1
 pkgdesc="Content-addressed filesystem search with persistent L1-L3 cache (2ms warm lookups)"
 arch=('x86_64')
 url="https://github.com/poler-engine-org/poler-harvest"
-license=('MIT' 'Apache-2.0')
+license=('custom:POLER-1.0')
 depends=('gcc-libs' 'glibc' 'zstd')
 makedepends=('cargo' 'pkgconf')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
@@ -39,4 +39,6 @@ package() {
     cd "$startdir"
     install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 TERMS.md "$pkgdir/usr/share/doc/$pkgname/TERMS.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
