@@ -1,0 +1,15 @@
+pkgbase = poler-harvest
+	pkgdesc = Sovereign Ultra-Fast Filesystem Harvester & L1-L3 Address Crystal Scanner (successor to find + ripgrep)
+	pkgver = 0.96.0
+	pkgrel = 1
+	url = https://github.com/poler-engine-org/poler-harvest
+	arch = x86_64
+	license = MIT
+	license = Apache-2.0
+	makedepends = cargo
+	depends = gcc-libs
+	depends = glibc
+	source = poler-harvest-0.96.0.tar.gz::https://github.com/poler-engine-org/poler-harvest/archive/refs/tags/v0.96.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = poler-harvest
