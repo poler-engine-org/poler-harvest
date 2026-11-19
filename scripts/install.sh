@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # POLER-HARVEST Universal Linux Installer
 # Работает на ЛЮБОМ Linux (Debian, Ubuntu, CachyOS, Arch, Fedora, Alpine) без sudo и без менеджеров пакетов.
-set -e
+set -euo pipefail
 
 REPO="poler-engine-org/poler-harvest"
 VERSION="0.96.1"
@@ -31,7 +31,7 @@ URL="https://github.com/${REPO}/releases/download/v${VERSION}/poler-harvest-${TA
 
 echo "⬇️  Скачивание бинарника в $INSTALL_DIR..."
 if command -v curl >/dev/null 2>&1; then
-    curl -sSL "$URL" | tar -xz -C "$INSTALL_DIR"
+    curl -sSLf "$URL" | tar -xz -C "$INSTALL_DIR"
 elif command -v wget >/dev/null 2>&1; then
     wget -qO- "$URL" | tar -xz -C "$INSTALL_DIR"
 else
