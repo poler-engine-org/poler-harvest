@@ -30,9 +30,22 @@
 curl -sSL https://raw.githubusercontent.com/poler-engine-org/poler-harvest/main/scripts/install.sh | bash
 ```
 
-### 2. Для AI-агентов и песочниц (через Pip без root):
+### 2. Для AI-агентов и песочниц (Python / Pip без root):
 ```bash
-pip install https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler_harvest-0.96.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+# В виртуальном окружении (venv / conda):
+pip install https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler_harvest-0.96.0-py3-none-manylinux_2_34_x86_64.whl
+
+# В песочницах без venv (Debian 12+, Ubuntu 23.04+ с PEP 668):
+pip install --break-system-packages https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.0/poler_harvest-0.96.0-py3-none-manylinux_2_34_x86_64.whl
+```
+
+#### Использование прямо из Python:
+```python
+import poler_harvest
+
+# Быстрый поиск файлов (возвращает markdown, json или corpus):
+output = poler_harvest.search(root=".", query="TODO", format="markdown")
+print(output)
 ```
 
 ### 3. Для Conda / Anaconda (HPC / Cloud):
