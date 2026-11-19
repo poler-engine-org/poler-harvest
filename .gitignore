@@ -1,6 +1,10 @@
 /target
 /pkg
 *.pkg.tar.zst
+*.tar.gz
+*.tar.bz2
+*.deb
+*.whl
 **/*.rs.bk
 *.poler
 *.t5a
