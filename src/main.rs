@@ -1,10 +1,11 @@
 //! CLI для автономного сборщика и сканера диска poler-harvest
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use clap::{Parser, ValueEnum};
 use poler_harvest::{
-    run_harvest, HarvestConfig, HarvestFormat, HarvestMode,
+    run_harvest, ColorChoice, HarvestConfig, HarvestFormat, HarvestMode,
 };
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +106,10 @@ struct Cli {
     /// Защитный кап вывода байт (анти-раздувание RAM/диска)
     #[arg(long = "max-out-bytes", default_value_t = 256 * 1024 * 1024)]
     max_out_bytes: u64,
+
+    /// Режим цветовой подсветки в терминале: auto (по умолчанию для TTY), always, never
+    #[arg(long = "color", value_enum, default_value = "auto")]
+    color: ColorChoice,
 }
 
 fn parse_format(pos: Option<&str>, flag: Option<FormatArg>) -> HarvestFormat {
@@ -178,11 +183,14 @@ fn main() -> ExitCode {
         no_ignore: cli.no_ignore,
         chunk_bytes: 4 << 20, // 4 MB default chunk
         no_cache: cli.no_cache,
+        color: cli.color,
     };
 
     match run_harvest(&cfg) {
         Ok(stats) => {
-            eprintln!("{}", stats.summary_line());
+            let is_stderr_tty = std::io::stderr().is_terminal();
+            let color_stats = cli.color.should_color(is_stderr_tty);
+            eprintln!("{}", stats.summary_line_colored(color_stats));
             if stats.read_errors > 0 {
                 eprintln!("poler-harvest: ошибок чтения: {}", stats.read_errors);
             }

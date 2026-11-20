@@ -40,7 +40,7 @@
 
 use std::collections::BinaryHeap;
 use std::fs::{self, File};
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufWriter, IsTerminal, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -168,6 +168,29 @@ pub enum HarvestFormat {
     Address,
 }
 
+/// Выбор режима цветового оформления (ANSI).
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ColorChoice {
+    /// Автоматически: цвет включен, только если вывод идет в интерактивный терминал (TTY)
+    #[default]
+    Auto,
+    /// Принудительно включить цвета
+    Always,
+    /// Полностью отключить цвета (чистый текст для ИИ-агентов, пайпов и скриптов)
+    Never,
+}
+
+impl ColorChoice {
+    #[inline]
+    pub fn should_color(&self, is_tty: bool) -> bool {
+        match self {
+            ColorChoice::Auto => is_tty,
+            ColorChoice::Always => true,
+            ColorChoice::Never => false,
+        }
+    }
+}
+
 /// Гранулярность агрегации.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HarvestMode {
@@ -216,6 +239,8 @@ pub struct HarvestConfig {
     pub chunk_bytes: usize,
     /// Отключить персистентный L1-L3 кэш (.t5a) и накопительный архив (.tar.poler).
     pub no_cache: bool,
+    /// Режим цветового выделения в терминале (auto, always, never).
+    pub color: ColorChoice,
 }
 
 impl HarvestConfig {
@@ -239,6 +264,7 @@ impl HarvestConfig {
             no_ignore: false,
             chunk_bytes: DEFAULT_CHUNK,
             no_cache: false,
+            color: ColorChoice::Auto,
         }
     }
 }
@@ -259,6 +285,7 @@ pub struct HarvestStats {
     pub changed_during_harvest: u64,
     pub duration_ms: u128,
     pub truncated: bool,
+    pub is_warm: bool,
 }
 
 impl HarvestStats {
@@ -270,15 +297,40 @@ impl HarvestStats {
         (self.bytes_scanned as f64 / 1024.0 / 1024.0) / (self.duration_ms as f64 / 1000.0)
     }
 
-    /// Однострочная сводка для stderr.
+    /// Однострочная сводка для stderr без цвета (обратная совместимость).
     pub fn summary_line(&self) -> String {
+        self.summary_line_colored(false)
+    }
+
+    /// Однострочная сводка для stderr с опциональной подсветкой и бейджем warm/cold.
+    pub fn summary_line_colored(&self, color: bool) -> String {
+        let badge = if color {
+            if self.is_warm {
+                "\x1b[1;92m⚡ [WARM L1-L3]\x1b[0m "
+            } else {
+                "\x1b[1;34m🔍 [COLD SCAN]\x1b[0m "
+            }
+        } else {
+            ""
+        };
+        let ms_str = if color {
+            format!("\x1b[1;93m{} мс\x1b[0m", self.duration_ms)
+        } else {
+            format!("{} мс", self.duration_ms)
+        };
+        let tp_str = if color {
+            format!("\x1b[1;92m{:.1} МБ/с\x1b[0m", self.throughput_mb_s())
+        } else {
+            format!("{:.1} МБ/с", self.throughput_mb_s())
+        };
         format!(
-            "poler_disk_harvester: {} файлов / {} каталогов за {} мс ({:.1} МБ/с); \
+            "{}poler_disk_harvester: {} файлов / {} каталогов за {} ({}); \
              совпадения в {} файлах, отобрано {}, секций {}, вывод {} КиБ{}",
+            badge,
             self.files_scanned,
             self.dirs_scanned,
-            self.duration_ms,
-            self.throughput_mb_s(),
+            ms_str,
+            tp_str,
             self.files_matched,
             self.files_selected,
             self.sections_written,
@@ -687,6 +739,23 @@ impl Matcher {
             Matcher::Re(re, _) => {
                 for m in re.find_iter(hay) {
                     f(m.start());
+                }
+            }
+        }
+    }
+
+    /// Все интервалы (start, end) совпадений в haystack (по возрастанию).
+    #[inline]
+    fn for_each_match(&self, hay: &[u8], mut f: impl FnMut(usize, usize)) {
+        match self {
+            Matcher::Ac { ac, .. } => {
+                for m in ac.find_iter(hay) {
+                    f(m.start(), m.end());
+                }
+            }
+            Matcher::Re(re, _) => {
+                for m in re.find_iter(hay) {
+                    f(m.start(), m.end());
                 }
             }
         }
@@ -1611,6 +1680,7 @@ pub fn run_harvest(cfg: &HarvestConfig) -> Result<HarvestStats, String> {
     } else {
         None
     };
+    let is_warm = crystal_hit.is_some();
     let (counters, hits) = if let Some((c_counters, c_hits, dirty)) = crystal_hit {
         if dirty && !cfg.no_cache {
             crystallize_harvest(&cpath, scope_key, query_key, &c_counters, &c_hits);
@@ -1648,9 +1718,10 @@ pub fn run_harvest(cfg: &HarvestConfig) -> Result<HarvestStats, String> {
         files_matched,
         files_selected: hits.len(),
         duration_ms: t0.elapsed().as_millis(),
+        is_warm,
         ..Default::default()
     };
-    write_output(cfg, &hits, &mut stats)
+    write_output(cfg, &hits, &mut stats, &matcher)
         .map_err(|e| format!("запись вывода {}: {e}", cfg.out_path.display()))?;
     stats.duration_ms = t0.elapsed().as_millis();
     Ok(stats)
@@ -2071,12 +2142,63 @@ fn merged_ranges(offsets: &[u32], starts: &[u32], ctx: usize) -> Vec<(usize, usi
     merged
 }
 
+/// Записывает строку с подсветкой совпадений запроса:
+/// - Текст вывода: обычный / дефолтный цвет (\x1b[0m)
+/// - Совпадение запроса: ярко-желтый жирный (\x1b[1;93m)
+fn write_highlighted_line<W: Write>(
+    w: &mut W,
+    line: &[u8],
+    matcher: &Matcher,
+) -> std::io::Result<()> {
+    let mut matches = Vec::new();
+    matcher.for_each_match(line, |start, end| {
+        if start < end && end <= line.len() {
+            matches.push((start, end));
+        }
+    });
+
+    if matches.is_empty() {
+        w.write_all(line)?;
+        return Ok(());
+    }
+
+    matches.sort_unstable_by_key(|&(s, _)| s);
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(matches.len());
+    for (s, e) in matches {
+        if let Some(last) = merged.last_mut() {
+            if s <= last.1 {
+                last.1 = last.1.max(e);
+                continue;
+            }
+        }
+        merged.push((s, e));
+    }
+
+    let mut cursor = 0;
+    for (s, e) in merged {
+        if s > cursor {
+            w.write_all(&line[cursor..s])?;
+        }
+        w.write_all(b"\x1b[1;93m")?;
+        w.write_all(&line[s..e])?;
+        w.write_all(b"\x1b[0m")?;
+        cursor = e;
+    }
+    if cursor < line.len() {
+        w.write_all(&line[cursor..])?;
+    }
+    Ok(())
+}
+
 fn write_output(
     cfg: &HarvestConfig,
     hits: &[FileHit],
     stats: &mut HarvestStats,
+    matcher: &Matcher,
 ) -> std::io::Result<()> {
     let stdout = cfg.out_path.as_os_str() == "-";
+    let is_tty = stdout && std::io::stdout().is_terminal();
+    let use_color = cfg.color.should_color(is_tty);
     let inner: Box<dyn Write> = if stdout {
         Box::new(BufWriter::with_capacity(OUT_BUF, std::io::stdout().lock()))
     } else {
@@ -2085,7 +2207,7 @@ fn write_output(
     let mut w = CountingWriter { inner, n: 0 };
 
     if cfg.format == HarvestFormat::Markdown {
-        write_md_header(&mut w, cfg, stats)?;
+        write_md_header(&mut w, cfg, stats, use_color)?;
     } else if cfg.format == HarvestFormat::Json {
         let mut line = String::from("{\"type\":\"meta\",\"roots\":[");
         for (i, r) in cfg.roots.iter().enumerate() {
@@ -2124,11 +2246,19 @@ fn write_output(
                     stats.truncated = true;
                     break 'files;
                 }
-                let line = format!(
-                    "{{\"type\":\"anchor\",\"path\":{},\"offset\":{},\"len\":{},\"matches\":{}}}\n",
-                    esc_path, off, qlen, hit.match_count
-                );
-                w.write_all(line.as_bytes())?;
+                if use_color {
+                    let line = format!(
+                        "{{\"type\":\"anchor\",\x1b[90m\"path\":\x1b[0m\x1b[1;36m{}\x1b[0m,\x1b[90m\"offset\":\x1b[0m\x1b[32m{}\x1b[0m,\x1b[90m\"len\":\x1b[0m\x1b[35m{}\x1b[0m,\x1b[90m\"matches\":\x1b[0m\x1b[1;93m{}\x1b[0m}}\n",
+                        esc_path, off, qlen, hit.match_count
+                    );
+                    w.write_all(line.as_bytes())?;
+                } else {
+                    let line = format!(
+                        "{{\"type\":\"anchor\",\"path\":{},\"offset\":{},\"len\":{},\"matches\":{}}}\n",
+                        esc_path, off, qlen, hit.match_count
+                    );
+                    w.write_all(line.as_bytes())?;
+                }
                 stats.sections_written += 1;
             }
             continue;
@@ -2162,44 +2292,85 @@ fn write_output(
 
         match (cfg.format, cfg.mode) {
             (HarvestFormat::Markdown, HarvestMode::Files) => {
-                write!(
-                    w,
-                    "\n## [{idx}] {} — {} совпадений, {} байт\n\n````text\n",
-                    hit.path.display(),
-                    hit.match_count,
-                    hit.size
-                )?;
-                w.write_all(&buf)?;
+                if use_color {
+                    write!(
+                        w,
+                        "\n## [\x1b[1;35m{idx}\x1b[0m] \x1b[1;36m{}\x1b[0m \x1b[90m—\x1b[0m \x1b[33m{}\x1b[0m \x1b[90mсовпадений, {} байт\x1b[0m\n\n\x1b[90m````text\x1b[0m\n",
+                        hit.path.display(),
+                        hit.match_count,
+                        hit.size
+                    )?;
+                    write_highlighted_line(&mut w, &buf, matcher)?;
+                } else {
+                    write!(
+                        w,
+                        "\n## [{idx}] {} — {} совпадений, {} байт\n\n````text\n",
+                        hit.path.display(),
+                        hit.match_count,
+                        hit.size
+                    )?;
+                    w.write_all(&buf)?;
+                }
                 if !buf.ends_with(b"\n") {
                     w.write_all(b"\n")?;
                 }
-                w.write_all(b"````\n")?;
+                if use_color {
+                    w.write_all(b"\x1b[90m````\x1b[0m\n")?;
+                } else {
+                    w.write_all(b"````\n")?;
+                }
                 stats.sections_written += 1;
             }
             (HarvestFormat::Markdown, HarvestMode::Sections) => {
-                write!(
-                    w,
-                    "\n## [{idx}] {} — {} совпадений, {} байт\n",
-                    hit.path.display(),
-                    hit.match_count,
-                    hit.size
-                )?;
+                if use_color {
+                    write!(
+                        w,
+                        "\n## [\x1b[1;35m{idx}\x1b[0m] \x1b[1;36m{}\x1b[0m \x1b[90m—\x1b[0m \x1b[33m{}\x1b[0m \x1b[90mсовпадений, {} байт\x1b[0m\n",
+                        hit.path.display(),
+                        hit.match_count,
+                        hit.size
+                    )?;
+                } else {
+                    write!(
+                        w,
+                        "\n## [{idx}] {} — {} совпадений, {} байт\n",
+                        hit.path.display(),
+                        hit.match_count,
+                        hit.size
+                    )?;
+                }
                 let starts = line_starts(&buf);
                 for (s, e) in merged_ranges(&hit.offsets, &starts, cfg.context_lines) {
                     if w.n >= cfg.max_out_bytes {
                         stats.truncated = true;
                         break 'files;
                     }
-                    w.write_all(b"\n````text\n")?;
+                    if use_color {
+                        w.write_all(b"\n\x1b[90m````text\x1b[0m\n")?;
+                    } else {
+                        w.write_all(b"\n````text\n")?;
+                    }
                     for i in s..e {
                         let line = line_slice(&buf, &starts, i);
-                        write!(w, "{:>5} | ", i + 1)?;
-                        w.write_all(line)?;
+                        if use_color {
+                            // Адрес: зеленый (\x1b[32m)
+                            // Путь к адресу: темно-серый разделитель (\x1b[90m | \x1b[0m)
+                            // Вывод: текст в обычном цвете с желтой подсветкой запроса (\x1b[1;93m)
+                            write!(w, "\x1b[32m{:>5}\x1b[0m\x1b[90m | \x1b[0m", i + 1)?;
+                            write_highlighted_line(&mut w, line, matcher)?;
+                        } else {
+                            write!(w, "{:>5} | ", i + 1)?;
+                            w.write_all(line)?;
+                        }
                         if !line.ends_with(b"\n") {
                             w.write_all(b"\n")?;
                         }
                     }
-                    w.write_all(b"````\n")?;
+                    if use_color {
+                        w.write_all(b"\x1b[90m````\x1b[0m\n")?;
+                    } else {
+                        w.write_all(b"````\n")?;
+                    }
                     stats.sections_written += 1;
                 }
             }
@@ -2296,26 +2467,48 @@ fn write_md_header<W: Write>(
     w: &mut CountingWriter<W>,
     cfg: &HarvestConfig,
     stats: &HarvestStats,
+    use_color: bool,
 ) -> std::io::Result<()> {
     let roots: Vec<String> = cfg.roots.iter().map(|r| r.display().to_string()).collect();
-    writeln!(
-        w,
-        "# POLER Disk Harvest\n\n\
-         - **roots**: {}\n\
-         - **query**: {}{}\n\
-         - **mode**: {} (context: {})\n\
-         - **matched files**: {} (selected: {})\n",
-        roots.join(", "),
-        cfg.query,
-        if cfg.regex_mode { " [regex]" } else { "" },
-        match cfg.mode {
-            HarvestMode::Sections => "sections",
-            HarvestMode::Files => "files",
-        },
-        cfg.context_lines,
-        stats.files_matched,
-        stats.files_selected,
-    )
+    if use_color {
+        writeln!(
+            w,
+            "# POLER Disk Harvest\n\n\
+             - **roots**: \x1b[1;36m{}\x1b[0m\n\
+             - **query**: \x1b[1;93m{}\x1b[0m{}\n\
+             - **mode**: {} (context: {})\n\
+             - **matched files**: \x1b[32m{}\x1b[0m (selected: \x1b[1;32m{}\x1b[0m)\n",
+            roots.join(", "),
+            cfg.query,
+            if cfg.regex_mode { " [regex]" } else { "" },
+            match cfg.mode {
+                HarvestMode::Sections => "sections",
+                HarvestMode::Files => "files",
+            },
+            cfg.context_lines,
+            stats.files_matched,
+            stats.files_selected,
+        )
+    } else {
+        writeln!(
+            w,
+            "# POLER Disk Harvest\n\n\
+             - **roots**: {}\n\
+             - **query**: {}{}\n\
+             - **mode**: {} (context: {})\n\
+             - **matched files**: {} (selected: {})\n",
+            roots.join(", "),
+            cfg.query,
+            if cfg.regex_mode { " [regex]" } else { "" },
+            match cfg.mode {
+                HarvestMode::Sections => "sections",
+                HarvestMode::Files => "files",
+            },
+            cfg.context_lines,
+            stats.files_matched,
+            stats.files_selected,
+        )
+    }
 }
 
 fn write_md_footer<W: Write>(
@@ -2373,6 +2566,58 @@ mod tests {
 
     fn out_str(path: &Path) -> String {
         fs::read_to_string(path).unwrap()
+    }
+
+    #[test]
+    fn test_color_always_highlights_query_address_and_path() {
+        let d = tmpdir("color_always");
+        put(&d.join("demo.txt"), "hello FastCDC world\nsecond line here\n");
+        let out = outpath("color_always");
+        let mut cfg = HarvestConfig::new(vec![d.clone()], "FastCDC", &out);
+        cfg.color = ColorChoice::Always;
+        run_ok(&cfg);
+        let text = out_str(&out);
+        // Путь: Cyan
+        assert!(text.contains("\x1b[1;36m"), "Должен содержать Cyan для пути к файлу");
+        // Адрес (номер строки): Bright Green
+        assert!(text.contains("\x1b[32m"), "Должен содержать Bright Green для номера строки");
+        // Путь к адресу (разделитель): Dim Gray
+        assert!(text.contains("\x1b[90m | \x1b[0m"), "Должен содержать Dim Gray для разделителя");
+        // Запрос: Bold Bright Yellow
+        assert!(text.contains("\x1b[1;93mFastCDC\x1b[0m"), "Должен содержать Bold Yellow для совпадения запроса");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn test_color_never_has_no_ansi() {
+        let d = tmpdir("color_never");
+        put(&d.join("demo.txt"), "hello FastCDC world\nsecond line here\n");
+        let out = outpath("color_never");
+        let mut cfg = HarvestConfig::new(vec![d.clone()], "FastCDC", &out);
+        cfg.color = ColorChoice::Never;
+        run_ok(&cfg);
+        let text = out_str(&out);
+        assert!(!text.contains("\x1b["), "В режиме Never не должно быть ANSI escape sequences");
+        assert!(text.contains(" | hello FastCDC world"));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn test_summary_line_colored() {
+        let mut stats = HarvestStats::default();
+        stats.files_scanned = 100;
+        stats.duration_ms = 5;
+        stats.is_warm = true;
+        let colored = stats.summary_line_colored(true);
+        assert!(colored.contains("⚡ [WARM L1-L3]"));
+        assert!(colored.contains("\x1b[1;93m5 мс\x1b[0m"));
+
+        stats.is_warm = false;
+        let cold = stats.summary_line_colored(true);
+        assert!(cold.contains("🔍 [COLD SCAN]"));
+
+        let plain = stats.summary_line();
+        assert!(!plain.contains("\x1b["));
     }
 
     #[test]

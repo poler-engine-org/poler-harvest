@@ -7,7 +7,7 @@ pub mod harvester;
 pub mod trit_gate;
 
 pub use harvester::{
-    run_harvest, HarvestConfig, HarvestFormat, HarvestMode, HarvestStats,
+    run_harvest, HarvestConfig, HarvestFormat, HarvestMode, HarvestStats, ColorChoice,
     crystal_path_pub, crystal_lookup_pub, crystal_keys_pub, crystallize_pub,
     HitProjection, FileId,
 };
