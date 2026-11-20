@@ -3,6 +3,7 @@
 > **Content-Addressed Filesystem Search with Persistent L1–L3 Cache**  
 > *Instant 2 ms warm lookups for monorepos, developer workspaces, and AI agents.*
 
+[![CI](https://github.com/poler-engine-org/poler-harvest/actions/workflows/ci.yml/badge.svg)](https://github.com/poler-engine-org/poler-harvest/actions)
 [![License: POLER Source-Available 1.0](https://img.shields.io/badge/License-POLER--1.0%20Source--Available-blue.svg)](LICENSE)
 [![Arch Linux](https://img.shields.io/badge/Arch%20Linux-AUR-blue?logo=arch-linux)](https://aur.archlinux.org/packages/poler-harvest)
 [![CachyOS](https://img.shields.io/badge/CachyOS-Optimized-brightgreen)](https://cachyos.org)
