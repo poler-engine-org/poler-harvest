@@ -87,7 +87,8 @@ print(output)
 
 ### 3. Arch Linux / CachyOS (Pacman / Paru):
 ```bash
-sudo pacman -U https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.1/poler-harvest-0.96.1-1-x86_64.pkg.tar.zst
+curl -LO https://github.com/poler-engine-org/poler-harvest/releases/download/v0.96.1/poler-harvest-0.96.1-1-x86_64.pkg.tar.zst
+sudo pacman -U poler-harvest-0.96.1-1-x86_64.pkg.tar.zst
 ```
 
 ### 4. Debian / Ubuntu / Mint (.deb):
